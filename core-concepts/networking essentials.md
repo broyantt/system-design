@@ -126,7 +126,7 @@ For example, in VoIP (Voice Calling), some packet loss might lead to a slight hi
 2. **Guaranteed Delivery**: Packets are guaranteed to arrive + in order + no errors. 
 	- TCP ensures that the recipients of the messages (packets) will acknowledge the receipt of those packets, and if no receipt, TCP will retransmit the messages until they are acknowledged. 
 3. **Flow Control**: Prevents the sender from sending too much data and overwhelming the receiver's buffer (could lead to packet loss). (UDP don't have this)
-	- The receiver has this thing called a *receive buffer* and if too much data is being sent from the sender, its receive bugger will fill up and packets get dropped.
+	- The receiver has this thing called a *receive buffer* and if too much data is being sent from the sender, its receive buffer will fill up and packets get dropped.
 
 	Flow control solves this with a receive window:
 		```
@@ -139,7 +139,7 @@ For example, in VoIP (Voice Calling), some packet loss might lead to a slight hi
 	The receiver continuously advertises how much space it has left in its buffer, and the sender respects that limit. It's a feedback loop between sender and receiver.
 4. **Congestion Control**: Prevents the sender from sending too much data and overwhelming the network (UDP don't have this).
 	- The network between the sender and receiver has limits (routers have finite buffer space, links have finite bandwidth).
-	- If many senders are sending data simulatenously, the routers can start dropping packets and causing the network to be congested.
+	- If many senders are sending data simultaneously, the routers can start dropping packets and causing the network to be congested.
 
 TCP is absolutely *perfect* for applications where data integrity is important (this is basically every other application where UDP is not a good fit!).
 
@@ -203,7 +203,7 @@ HTTP is a **stateless** protocol, meaning each request is independent and the se
 
 HTTP headers are a great example of how to design an interface that is flexible to unknown future use-cases and provides a good lesson for API design. Content negotiation is a perfect case study.
 
-The HTTP Accepts-Encoding header as an example provides clients a way to indicate they can handle different types of content encoding. This allows servers to provide (e.g.) gzip or br (brotli) encoded responses if they're available. Servers can then respond with the most efficient encoding for that client with Content-Encoding: X providing both backward compatibility and graceful degradation.
+The HTTP Accepts-Encoding header as an example provides clients a way to indicate they can handle different types of content encoding. This allows servers to provide encoded responses if they're available. Servers can then respond with the most efficient encoding for that client with Content-Encoding: X. This provides both backward compatibility and graceful degradation.
 
 4. **Body**
 	- The actual content being transferred. 
@@ -215,11 +215,166 @@ The HTTP Accepts-Encoding header as an example provides clients a way to indicat
 Our API endpoint should never trust the contents of the request body before vailidating it. 
 
 A common mistake: Including the user's ID in the request body to use it to make a DB call. 
-- An attacker that can change the request body would simply just need to change the user ID in order to make DB calls.
+- An attacker that is eavesdropping can thus change it's user ID in order for them to be able to make DB calls.
+
+
+### REST
+
+HTTP is often used to build websites. REST is concerned with the *communication between services via APIs.* 
+
+There are 3 main paradigms for creating these APIs: REST, gRPC, GraphQL. 
+
+REST --> Simple + Flexible way to create easy-to-understand APIs.
+	- **Core Principle**: Clients are often performing simple operations against resources. Resources are essentially like DB tables / files on a server. 
+
+
+RESTful API Design --> Challenge is to model our resources and the operations we can perform on them. 
+	- **Core Idea**: Take advantage of HTTP's methods + some opinionated conventions about the paths and the body of the request. 
+	- Often uses *JSON* to represent the resources in both the request and response bodies. 
+
+
+```JavaScript
+GET /users/{id} --> User
+```
+
+> User is a JSON object representing a user. 
+
+In the above RESTful API, we are using the HTTP method `GET` to request a resource. The `{id}` is a placeholder for the resource id (in this case its the user id). 
+
+If we want to update the user we would have used `PUT` , and if we wanted to create a new user we would have used `POST`.
+
+**Nested Relationships**
+
+Resources can be used to represent relationships between resources. E.g. A user might have many posts, so we can represent that relationship by nesting the posts resource under the user resource:
+
+```JavaScript
+GET /users/{id}/posts -> [Posts]
+```
+
+Again, REST is *very flexible* and *easy to use!* It should be the default chosen for most of the time during interviews. 
+
+BUT, REST is not going to be the most performant solution for very high throughput services + JSON is not the most efficient format for serializing + deserializing data. 
+
+
+### GraphQL: Flexible Data Fetching
+
+GraphQL allows clients to request exactly the data they need. 
+
+It **solves the problem of under-fetching** (the frontend requires a lot of API calls in order to render. This adds a lot of overhead and latency when the page wants to load):
+
+![[Underfetching.png]]
+
+It also **solves the problem of over-fetching**. 
+
+![[Overfetching.png]]
+Over-fetching occurs when we pack way more data than we need in an API response in an attempt to future-proof the use cases of that API. It essentially causes these APIs to take a very long time to load as they are returning so much data. 
+
+GraphQL *solves the above two problems* by allowing the frontend team to flexibly query the backend for exactly the data they need. 
+
+**Great Fit**: 
+- Mobile Apps + other applications where we want to ***reduce the amount of data transferred.*** 
+	- Mobile apps run on variable network conditions (3G, spotty wifi). Every unnecessary byte costs load time and battery. 
+- Where the problem is ***clearly focused on flexibility*** (need the ability to quickly adapt our applications to changing requirements).
+	- if a product team wants to redesign a page and needs a slightly different combination of fields, the frontend team just changes their query and they don't need to wait for the backend engineers to create endpoints, and deploy them.
+
+
+**Example + Explanation**:
+
+Let's use a concrete scenario: we're building a profile page that needs to show a user's **name**, their **3 most recent posts** (just title and date), and their **follower count**.
+
+With REST, this data likely lives across separate endpoints:
+
+```
+GET /users/123              → returns full user object (way more fields than we need)
+GET /users/123/posts        → returns ALL posts with ALL fields
+GET /users/123/followers    → returns full list of followers just to count them
+```
+
+That's **3 separate network round trips**, and each response carries fields we don't even use. The `/users/123` endpoint might return `email`, `address`, `created_at`, `settings`, leading to over-fetching. 
+
+If instead a clever backend dev made a `GET /users/123/summary` endpoint that returns _only_ name + posts + follower count for this specific page then great!
+
+But what happens when the homepage needs a slightly different combination (name + bio, no posts)? 
+
+We need to write _another_ custom endpoint...
+
+---
+
+With GraphQL, there's **one single endpoint** (`POST /graphql`), and the frontend describes exactly the shape of data it wants:
+
+```graphql
+query {
+  user(id: "123") {
+    name
+    posts(limit: 3) {
+      title
+      date
+    }
+    followerCount
+  }
+}
+```
+
+The server responds with **exactly that shape and nothing more**:
+
+```json
+{
+  "user": {
+    "name": "Bryan Tjandra",
+    "posts": [
+      { "title": "Learning System Design", "date": "2026-06-15" },
+      { "title": "TikTok Onboarding", "date": "2026-06-10" },
+      { "title": "Karpathy Notes", "date": "2026-06-05" }
+    ],
+    "followerCount": 142
+  }
+}
+```
+
+There's a **schema** defined on the backend that describes every possible type and field that can be queried:
+
+```graphql
+type User {
+  id: ID
+  name: String
+  email: String
+  posts: [Post]
+  followerCount: Int
+}
+
+type Post {
+  id: ID
+  title: String
+  date: String
+  content: String
+}
+```
+
+When a query comes in, the GraphQL server has a **resolver** for each field: a small function that knows how to fetch that specific piece of data (often from a database call). 
+
+The server walks the query, runs the relevant resolvers, and assembles the response in the exact shape requested.
+
+```
+Client sends query
+      ↓
+GraphQL server parses query against schema
+      ↓
+For each requested field → calls its resolver function
+      ↓
+Resolvers fetch data (from DB, cache, another service, etc.)
+      ↓
+Server assembles response in the exact shape of the query
+      ↓
+Returns to client
+```
+
+**Solves under-fetching**: the homepage and profile page can each send a different query shape from the _same_ endpoint, instead of needing custom endpoints per screen.
+
+**Solves over-fetching**: you only ever get the fields you explicitly asked for. 
 
 
 
-
+### How The 3 Layers Work Together?
 
 To see how these 3 layers work together, let's walk through an example of how a simple web request works:
 
